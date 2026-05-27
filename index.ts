@@ -172,6 +172,27 @@ type CmdMessage =
 	| { role: "assistant"; content: AssistantContent[] }
 	| { role: "tool"; content: ToolContent[] };
 
+function stringifyUnknown(value: unknown): string {
+	if (value instanceof Error) return value.message || value.stack || "Error";
+	if (typeof value === "string") return value;
+	try {
+		return JSON.stringify(value) ?? String(value);
+	} catch {
+		return "Unknown error (non-serializable)";
+	}
+}
+
+function parseJsonLine(line: string, lineNumber: number): unknown {
+	try {
+		return JSON.parse(line);
+	} catch (error) {
+		const preview = line.length > 240 ? `${line.slice(0, 240)}...` : line;
+		throw new Error(
+			`Malformed Command Code NDJSON at line ${lineNumber}: ${preview} (${stringifyUnknown(error)})`,
+		);
+	}
+}
+
 function convertMessages(messages: Message[]): CmdMessage[] {
 	const out: CmdMessage[] = [];
 	// Track tool call names by id so tool-result messages can fill `toolName`
@@ -256,10 +277,11 @@ function staticConfig() {
 
 // ---- NDJSON line reader -------------------------------------------------
 
-async function* ndjsonLines(body: ReadableStream<Uint8Array>): AsyncGenerator<any> {
+async function* ndjsonLines(body: ReadableStream<Uint8Array>): AsyncGenerator<unknown> {
 	const reader = body.getReader();
 	const decoder = new TextDecoder();
 	let buffer = "";
+	let lineNumber = 0;
 	while (true) {
 		const { done, value } = await reader.read();
 		if (done) break;
@@ -269,19 +291,25 @@ async function* ndjsonLines(body: ReadableStream<Uint8Array>): AsyncGenerator<an
 			const line = buffer.slice(0, nl).trim();
 			buffer = buffer.slice(nl + 1);
 			if (!line) continue;
-			try {
-				yield JSON.parse(line);
-			} catch {
-				// gateway should always emit valid JSON lines; skip malformed
-			}
+			lineNumber += 1;
+			yield parseJsonLine(line, lineNumber);
 		}
 	}
 	buffer = buffer.trim();
 	if (buffer) {
-		try {
-			yield JSON.parse(buffer);
-		} catch {}
+		lineNumber += 1;
+		yield parseJsonLine(buffer, lineNumber);
 	}
+}
+
+type GatewayEvent = Record<string, any>;
+
+function toolEventId(event: GatewayEvent): string | undefined {
+	return event.id ?? event.toolCallId;
+}
+
+function toolEventName(event: GatewayEvent): string {
+	return event.toolName ?? event.name ?? "";
 }
 
 // ---- Stream implementation ----------------------------------------------
@@ -365,31 +393,34 @@ function streamCommandCode(
 			// id-keyed maps: gateway gives us "reasoning-0", "txt-0", "call_..." as ids
 			const idToIndex = new Map<string, number>();
 			const toolJsonByIndex = new Map<number, string>();
+			const endedToolCalls = new Set<number>();
 
 			for await (const event of ndjsonLines(response.body)) {
-				const type = event?.type;
+				if (!event || typeof event !== "object") continue;
+				const gatewayEvent = event as GatewayEvent;
+				const type = gatewayEvent.type;
 				if (!type) continue;
 
 				switch (type) {
 					case "reasoning-start": {
 						output.content.push({ type: "thinking", thinking: "" });
 						const idx = output.content.length - 1;
-						idToIndex.set(event.id, idx);
+						idToIndex.set(gatewayEvent.id, idx);
 						stream.push({ type: "thinking_start", contentIndex: idx, partial: output });
 						break;
 					}
 					case "reasoning-delta": {
-						const idx = idToIndex.get(event.id);
+						const idx = idToIndex.get(gatewayEvent.id);
 						if (idx === undefined) break;
 						const block = output.content[idx];
 						if (block.type !== "thinking") break;
-						const delta = event.text ?? "";
+						const delta = gatewayEvent.text ?? "";
 						block.thinking += delta;
 						stream.push({ type: "thinking_delta", contentIndex: idx, delta, partial: output });
 						break;
 					}
 					case "reasoning-end": {
-						const idx = idToIndex.get(event.id);
+						const idx = idToIndex.get(gatewayEvent.id);
 						if (idx === undefined) break;
 						const block = output.content[idx];
 						if (block.type !== "thinking") break;
@@ -404,22 +435,22 @@ function streamCommandCode(
 					case "text-start": {
 						output.content.push({ type: "text", text: "" });
 						const idx = output.content.length - 1;
-						idToIndex.set(event.id, idx);
+						idToIndex.set(gatewayEvent.id, idx);
 						stream.push({ type: "text_start", contentIndex: idx, partial: output });
 						break;
 					}
 					case "text-delta": {
-						const idx = idToIndex.get(event.id);
+						const idx = idToIndex.get(gatewayEvent.id);
 						if (idx === undefined) break;
 						const block = output.content[idx];
 						if (block.type !== "text") break;
-						const delta = event.text ?? "";
+						const delta = gatewayEvent.text ?? "";
 						block.text += delta;
 						stream.push({ type: "text_delta", contentIndex: idx, delta, partial: output });
 						break;
 					}
 					case "text-end": {
-						const idx = idToIndex.get(event.id);
+						const idx = idToIndex.get(gatewayEvent.id);
 						if (idx === undefined) break;
 						const block = output.content[idx];
 						if (block.type !== "text") break;
@@ -432,24 +463,28 @@ function streamCommandCode(
 						break;
 					}
 					case "tool-input-start": {
+						const id = toolEventId(gatewayEvent);
+						if (!id) break;
 						output.content.push({
 							type: "toolCall",
-							id: event.id,
-							name: event.toolName ?? "",
+							id,
+							name: toolEventName(gatewayEvent),
 							arguments: {},
 						});
 						const idx = output.content.length - 1;
-						idToIndex.set(event.id, idx);
+						idToIndex.set(id, idx);
 						toolJsonByIndex.set(idx, "");
 						stream.push({ type: "toolcall_start", contentIndex: idx, partial: output });
 						break;
 					}
 					case "tool-input-delta": {
-						const idx = idToIndex.get(event.id);
+						const id = toolEventId(gatewayEvent);
+						if (!id) break;
+						const idx = idToIndex.get(id);
 						if (idx === undefined) break;
 						const block = output.content[idx];
 						if (block.type !== "toolCall") break;
-						const delta = event.delta ?? "";
+						const delta = gatewayEvent.delta ?? "";
 						const acc = (toolJsonByIndex.get(idx) ?? "") + delta;
 						toolJsonByIndex.set(idx, acc);
 						try {
@@ -462,13 +497,25 @@ function streamCommandCode(
 					}
 					case "tool-input-end":
 					case "tool-call": {
-						const idx = idToIndex.get(event.id);
-						if (idx === undefined) break;
+						const id = toolEventId(gatewayEvent);
+						if (!id) break;
+						let idx = idToIndex.get(id);
+						if (idx === undefined) {
+							output.content.push({
+								type: "toolCall",
+								id,
+								name: toolEventName(gatewayEvent),
+								arguments: {},
+							});
+							idx = output.content.length - 1;
+							idToIndex.set(id, idx);
+							stream.push({ type: "toolcall_start", contentIndex: idx, partial: output });
+						}
 						const block = output.content[idx];
 						if (block.type !== "toolCall") break;
 						// Some streams send full input on "tool-call"; prefer that if present
-						if (event.input && typeof event.input === "object") {
-							block.arguments = event.input;
+						if (gatewayEvent.input && typeof gatewayEvent.input === "object") {
+							block.arguments = gatewayEvent.input;
 						} else {
 							const acc = toolJsonByIndex.get(idx) ?? "";
 							if (acc) {
@@ -477,6 +524,8 @@ function streamCommandCode(
 								} catch {}
 							}
 						}
+						if (endedToolCalls.has(idx)) break;
+						endedToolCalls.add(idx);
 						stream.push({
 							type: "toolcall_end",
 							contentIndex: idx,
@@ -492,22 +541,32 @@ function streamCommandCode(
 					}
 					case "finish-step":
 					case "finish": {
-						const usage = event.usage;
+						const usage = gatewayEvent.usage;
 						if (usage) {
-							output.usage.input = usage.inputTokens ?? usage.input_tokens ?? 0;
-							output.usage.output = usage.outputTokens ?? usage.output_tokens ?? 0;
-							output.usage.cacheRead =
+							// The gateway reports inputTokens as the TOTAL input (cached + uncached),
+							// matching the Vercel AI SDK convention. Pi's Usage shape expects
+							// `input` and `cacheRead` to be disjoint — calculateCost multiplies
+							// each separately, so leaving cached tokens inside `input` would
+							// double-charge on paid models. Subtract to match the convention
+							// used by the built-in Anthropic provider in pi-ai.
+							const totalInputTokens = usage.inputTokens ?? usage.input_tokens ?? 0;
+							const cacheReadTokens =
 								usage.cachedInputTokens ??
 								usage.inputTokenDetails?.cacheReadTokens ??
 								usage.raw?.prompt_cache_hit_tokens ??
 								0;
+							output.usage.input = Math.max(0, totalInputTokens - cacheReadTokens);
+							output.usage.output = usage.outputTokens ?? usage.output_tokens ?? 0;
+							output.usage.cacheRead = cacheReadTokens;
 							output.usage.cacheWrite = 0;
 							output.usage.totalTokens =
-								usage.totalTokens ??
-								output.usage.input + output.usage.output + output.usage.cacheRead;
+								output.usage.input +
+								output.usage.output +
+								output.usage.cacheRead +
+								output.usage.cacheWrite;
 							calculateCost(model, output.usage);
 						}
-						const reason = event.finishReason ?? event.rawFinishReason;
+						const reason = gatewayEvent.finishReason ?? gatewayEvent.rawFinishReason;
 						if (reason === "length") output.stopReason = "length";
 						else if (reason === "tool-calls" || reason === "tool_calls" || reason === "tool_use")
 							output.stopReason = "toolUse";
@@ -515,7 +574,12 @@ function streamCommandCode(
 						break;
 					}
 					case "error": {
-						throw new Error(event.message ?? event.error ?? "Command Code stream error");
+						throw new Error(
+							gatewayEvent.message ??
+								(gatewayEvent.error === undefined
+									? "Command Code stream error"
+									: stringifyUnknown(gatewayEvent.error)),
+						);
 					}
 				}
 			}
@@ -528,17 +592,7 @@ function streamCommandCode(
 			stream.end();
 		} catch (error) {
 			output.stopReason = options?.signal?.aborted ? "aborted" : "error";
-			let msg: string;
-			if (error instanceof Error) msg = error.message || error.stack || "Error";
-			else if (typeof error === "string") msg = error;
-			else {
-				try {
-					msg = JSON.stringify(error);
-				} catch {
-					msg = "Unknown error (non-serializable)";
-				}
-			}
-			output.errorMessage = msg;
+			output.errorMessage = stringifyUnknown(error);
 			if (process.env.DEBUG) {
 				console.error("[commandcode] stream error:", error);
 			}

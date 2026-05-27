@@ -3,8 +3,8 @@ dist/
 .DS_Store
 *.log
 
-# Belt-and-suspenders: never commit a literal API key, even by accident.
-# CI / pre-commit will also block these patterns.
-**/user_*[a-zA-Z0-9]*
+# Local key dumps.
+.commandcode-api-key
+commandcode-api-key.txt
 .env
 .env.local

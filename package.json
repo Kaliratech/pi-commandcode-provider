@@ -25,6 +25,9 @@
   "bugs": {
     "url": "https://github.com/safzanpirani/pi-commandcode-provider/issues"
   },
+  "engines": {
+    "node": ">=20.0.0"
+  },
   "peerDependencies": {
     "@earendil-works/pi-ai": "*",
     "@earendil-works/pi-coding-agent": "*"
@@ -35,6 +38,10 @@
     ]
   },
   "scripts": {
-    "check": "echo 'nothing to check'"
+    "check": "tsc --noEmit"
+  },
+  "devDependencies": {
+    "@types/node": "^22.15.29",
+    "typescript": "^5.9.2"
   }
 }

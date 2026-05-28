@@ -72,6 +72,16 @@ To add more, edit the `MODELS` array in `index.ts` — every id in the gateway's
 - Response is **NDJSON** (newline-delimited JSON), not SSE — events like `reasoning-start/delta/end`, `text-start/delta/end`, `tool-input-start/delta/end`, `finish-step`
 - The extension translates pi's native message format ↔ that wire shape and maps stream events onto pi's `thinking_*` / `text_*` / `toolcall_*` events
 
+For the full, field-by-field contract, see the docs below.
+
+## Docs
+
+Reverse-engineered reference for the undocumented endpoint this extension speaks — useful if you're forking, extending, or the schema drifts and something starts 400ing:
+
+- [`docs/wire-protocol.md`](docs/wire-protocol.md) — the complete `/alpha/generate` request/response contract: config envelope, Vercel-AI-SDK `ModelMessage` schema, tool format, every NDJSON event type, usage shape.
+- [`docs/caching.md`](docs/caching.md) — prompt caching behavior + measured numbers (~36× cheaper on a warm prefix), and why the extension subtracts cached tokens from `input`.
+- [`docs/troubleshooting.md`](docs/troubleshooting.md) — the 401 / 403 / 400 error modes, what each means, how to fix, and how to re-derive the protocol from the CLI bundle when it changes.
+
 ## Caveats
 
 - **Undocumented endpoint.** `/alpha/generate` isn't a published API surface. Command Code can change the schema at any time. If they tighten the request shape, expect 400 errors until the extension is updated. For request-schema 400s, first compare the outgoing body in `index.ts` against the current CLI envelope: `config.{workingDir, date, environment, structure, isGitRepo, currentBranch, mainBranch, gitStatus, recentCommits}`, `memory: string`, `taste`, `skills`, `permissionMode`, and `params.{model, system, messages, tools, max_tokens, stream}`.

@@ -1,12 +1,12 @@
 # pi-commandcode-provider
 
-A [pi](https://github.com/earendil-works/pi-mono) extension that adds [Command Code](https://commandcode.ai) as a model provider — DeepSeek V4 Pro, Kimi K2.6, Qwen 3.7 Max, MiMo V2.5 Pro, GLM 5.1, MiniMax M2.7, and others, all routable from inside pi.
+A [pi](https://github.com/earendil-works/pi-mono) extension that adds [Command Code](https://commandcode.ai) as a model provider — DeepSeek V4 Pro/Flash, Kimi K2.7 Code, GLM 5.2, MiniMax M3, Qwen 3.7 Max, MiMo V2.5 Pro, Nemotron 3 Ultra, and the rest of the open-weight roster, all routable from inside pi.
 
-> **Unofficial.** Reverse-engineered from the `command-code` npm CLI (v0.28.1). Not affiliated with or endorsed by Command Code / Langbase. Schema is undocumented and can change without notice.
+> **Unofficial.** Reverse-engineered from the `command-code` npm CLI (v0.39.1). Not affiliated with or endorsed by Command Code / Langbase. Schema is undocumented and can change without notice.
 
 ## Why this exists
 
-Command Code's `/provider/v1/messages` and `/provider/v1/chat/completions` endpoints are gated behind the **Pro plan**. The **Go plan** ($1/month with $10 of credits and per-model multipliers, e.g. ~$40 of DeepSeek V4 Pro) doesn't expose them — calls return `403: Your Go plan doesn't include API access`.
+Command Code's `/provider/v1/messages` and `/provider/v1/chat/completions` **generation** endpoints are gated behind the **Pro plan**. The **Go plan** ($1/month with $10 of credits and per-model multipliers, e.g. ~$40 of DeepSeek V4 Pro) doesn't expose them — calls return `403: Your Go plan doesn't include API access`. (The `GET /provider/v1/models` _list_ endpoint is readable on Go — handy for discovering ids — but generation isn't.)
 
 This extension instead talks to `/alpha/generate`, the endpoint the Command Code CLI (`cmd`) uses for every model call. It's not plan-gated, so any account that can run `cmd` can use it. The trade-off is that the request/response shape is undocumented and Vercel-AI-SDK-flavored, not OpenAI- or Anthropic-shaped — hence the extension.
 
@@ -48,20 +48,35 @@ pi --model "commandcode/moonshotai/Kimi-K2.6" -p "draft a haiku about caching"
 
 ## Models
 
-Pulled from `/provider/v1/models` and registered with the canonical id the gateway expects. All support text input + reasoning.
+Pulled from `GET /provider/v1/models` and registered with the canonical id the gateway expects. All support text input + reasoning. This is the **open-weight** roster; proprietary frontier models are omitted by default (see below).
 
-| Model id                       | Display name        | Context | Max out |
-| ------------------------------ | ------------------- | ------- | ------- |
-| `deepseek/deepseek-v4-pro`     | DeepSeek V4 Pro     | 1M      | 128K    |
-| `deepseek/deepseek-v4-flash`   | DeepSeek V4 Flash   | 1M      | 128K    |
-| `xiaomi/mimo-v2.5-pro`         | MiMo V2.5 Pro       | 1M      | 128K    |
-| `xiaomi/mimo-v2.5`             | MiMo V2.5           | 1M      | 128K    |
-| `Qwen/Qwen3.7-Max`             | Qwen 3.7 Max        | 1M      | 128K    |
-| `moonshotai/Kimi-K2.6`         | Kimi K2.6           | 256K    | 64K     |
-| `MiniMaxAI/MiniMax-M2.7`       | MiniMax M2.7        | 200K    | 64K     |
-| `zai-org/GLM-5.1`              | GLM 5.1             | 200K    | 32K     |
+| Model id                              | Display name              | Context | Max out |
+| ------------------------------------- | ------------------------- | ------- | ------- |
+| `deepseek/deepseek-v4-pro`            | DeepSeek V4 Pro           | 1M      | 128K    |
+| `deepseek/deepseek-v4-flash`          | DeepSeek V4 Flash         | 1M      | 128K    |
+| `moonshotai/Kimi-K2.7-Code`           | Kimi K2.7 Code            | 256K    | 64K     |
+| `moonshotai/Kimi-K2.7-Code-Highspeed` | Kimi K2.7 Code HighSpeed  | 262K    | 64K     |
+| `moonshotai/Kimi-K2.6`                | Kimi K2.6                 | 256K    | 64K     |
+| `moonshotai/Kimi-K2.5`                | Kimi K2.5                 | 256K    | 64K     |
+| `zai-org/GLM-5.2`                     | GLM 5.2                   | 1M      | 128K    |
+| `zai-org/GLM-5.1`                     | GLM 5.1                   | 200K    | 32K     |
+| `zai-org/GLM-5`                       | GLM 5                     | 200K    | 32K     |
+| `MiniMaxAI/MiniMax-M3`                | MiniMax M3                | 1M      | 128K    |
+| `MiniMaxAI/MiniMax-M2.7`              | MiniMax M2.7              | 200K    | 64K     |
+| `MiniMaxAI/MiniMax-M2.5`              | MiniMax M2.5              | 200K    | 64K     |
+| `xiaomi/mimo-v2.5-pro`                | MiMo V2.5 Pro             | 1M      | 128K    |
+| `xiaomi/mimo-v2.5`                    | MiMo V2.5                 | 1M      | 128K    |
+| `Qwen/Qwen3.7-Max`                    | Qwen 3.7 Max              | 1M      | 128K    |
+| `Qwen/Qwen3.7-Plus`                   | Qwen 3.7 Plus             | 1M      | 128K    |
+| `Qwen/Qwen3.6-Max-Preview`            | Qwen 3.6 Max Preview      | 200K    | 32K     |
+| `Qwen/Qwen3.6-Plus`                   | Qwen 3.6 Plus             | 200K    | 32K     |
+| `stepfun/Step-3.7-Flash`             | Step 3.7 Flash            | 256K    | 64K     |
+| `stepfun/Step-3.5-Flash`             | Step 3.5 Flash            | 1M      | 128K    |
+| `nvidia/nemotron-3-ultra-550b-a55b`   | Nemotron 3 Ultra          | 1M      | 128K    |
 
-To add more, edit the `MODELS` array in `index.ts` — every id in the gateway's `GET /provider/v1/models` list works.
+**Proprietary models (omitted by default).** Command Code also serves `claude-opus-4-8`, `claude-opus-4-7`, `claude-sonnet-4-6`, `claude-fable-5`, `claude-haiku-4-5-20251001`, `gpt-5.5`, `gpt-5.4`, `gpt-5.4-mini`, `gpt-5.3-codex`, `google/gemini-3.5-flash`, and `google/gemini-3.1-flash-lite` over the same envelope. They bill real plan credits and are usually cheaper elsewhere, so they aren't registered here.
+
+To add any model, append a `ModelDef` to the `MODELS` array in `index.ts` — every id in the gateway's `GET /provider/v1/models` list works.
 
 ## How it works
 

@@ -2,9 +2,10 @@
  * Command Code provider extension for pi.
  *
  * Routes pi requests through https://api.commandcode.ai/alpha/generate
- * (the CLI's own endpoint), which the Go plan permits. The /provider/v1/*
- * compatibility endpoints are gated behind the Pro plan, so we cannot
- * use openai-completions / anthropic-messages directly.
+ * (the CLI's own endpoint), which every plan permits. The /provider/v1/*
+ * OpenAI/Anthropic-compatible endpoints have been flaky/plan-gated for
+ * generation, so we stick to the native /alpha/generate envelope the CLI
+ * itself uses (GET /provider/v1/models is readable for the roster).
  *
  * Authenticates with COMMANDCODE_API_KEY (a "user_..." token from
  * https://commandcode.ai/settings/billing or `cmd auth status`).
@@ -45,15 +46,27 @@ import type { ExtensionAPI } from "@earendil-works/pi-coding-agent";
 
 const BASE_URL = "https://api.commandcode.ai";
 const ENDPOINT = "/alpha/generate";
+// Mirrors the `x-command-code-version` the CLI sends (its package version).
+// Keep in step with the installed `command-code` package; stale values risk
+// being rejected or flagged by the gateway.
+const COMMAND_CODE_VERSION = "0.39.1";
 
 // ---- Models -------------------------------------------------------------
-// IDs are the gateway's canonical ids from GET /provider/v1/models.
-// The Go plan ($1/mo, $10 credits) has multipliers for these three:
-//   deepseek-v4-pro  → ~$40 of usage (4x)
-//   xiaomi/mimo-v2.5 → ~$100 (10x)
-//   xiaomi/mimo-v2.5-pro → ~$50 (5x)
-//   Qwen/Qwen3.7-Max → ~$20 (2x)
-// Other OSS models on Go cost real credits — burn fast.
+// IDs are the gateway's canonical ids from GET /provider/v1/models
+// (readable with a user_... key as of CLI 0.39.x).
+//
+// Only the open-weight / OSS roster is exposed here. Command Code also serves
+// proprietary frontier models (claude-*, gpt-*, google/gemini-*) through the
+// same /alpha/generate envelope, but they bill real plan credits and are
+// available far more cheaply elsewhere, so they're intentionally omitted.
+// To add one, append a ModelDef with the canonical id from the models list.
+//
+// The Go plan ($1/mo, $10 credits) has usage multipliers on some OSS models
+// (e.g. mimo-v2.5 is ~10x, mimo-v2.5-pro ~5x, deepseek-v4-pro ~4x,
+// Qwen3.7-Max ~2x) — heavy ones burn credits fast.
+//
+// maxTokens here is the per-call output cap pi sends as max_tokens; the gateway
+// clamps anything larger to the model's true limit.
 
 type ModelDef = {
 	id: string;
@@ -65,7 +78,10 @@ type ModelDef = {
 	cost: { input: number; output: number; cacheRead: number; cacheWrite: number };
 };
 
+const ZERO_COST = { input: 0, output: 0, cacheRead: 0, cacheWrite: 0 };
+
 const MODELS: ModelDef[] = [
+	// DeepSeek
 	{
 		id: "deepseek/deepseek-v4-pro",
 		name: "DeepSeek V4 Pro (Command Code)",
@@ -73,7 +89,7 @@ const MODELS: ModelDef[] = [
 		input: ["text"],
 		contextWindow: 1_000_000,
 		maxTokens: 131072,
-		cost: { input: 0, output: 0, cacheRead: 0, cacheWrite: 0 },
+		cost: ZERO_COST,
 	},
 	{
 		id: "deepseek/deepseek-v4-flash",
@@ -82,52 +98,54 @@ const MODELS: ModelDef[] = [
 		input: ["text"],
 		contextWindow: 1_000_000,
 		maxTokens: 131072,
-		cost: { input: 0, output: 0, cacheRead: 0, cacheWrite: 0 },
+		cost: ZERO_COST,
 	},
+	// Moonshot Kimi
 	{
-		id: "xiaomi/mimo-v2.5-pro",
-		name: "MiMo V2.5 Pro (Command Code)",
+		id: "moonshotai/Kimi-K2.7-Code",
+		name: "Kimi K2.7 Code (Command Code)",
 		reasoning: true,
 		input: ["text"],
-		contextWindow: 1_000_000,
-		maxTokens: 131072,
-		cost: { input: 0, output: 0, cacheRead: 0, cacheWrite: 0 },
+		contextWindow: 256000,
+		maxTokens: 65536,
+		cost: ZERO_COST,
 	},
 	{
-		id: "xiaomi/mimo-v2.5",
-		name: "MiMo V2.5 (Command Code)",
+		id: "moonshotai/Kimi-K2.7-Code-Highspeed",
+		name: "Kimi K2.7 Code HighSpeed (Command Code)",
 		reasoning: true,
 		input: ["text"],
-		contextWindow: 1_000_000,
-		maxTokens: 131072,
-		cost: { input: 0, output: 0, cacheRead: 0, cacheWrite: 0 },
-	},
-	{
-		id: "Qwen/Qwen3.7-Max",
-		name: "Qwen 3.7 Max (Command Code)",
-		reasoning: true,
-		input: ["text"],
-		contextWindow: 1_000_000,
-		maxTokens: 131072,
-		cost: { input: 0, output: 0, cacheRead: 0, cacheWrite: 0 },
+		contextWindow: 262000,
+		maxTokens: 65536,
+		cost: ZERO_COST,
 	},
 	{
 		id: "moonshotai/Kimi-K2.6",
 		name: "Kimi K2.6 (Command Code)",
 		reasoning: true,
 		input: ["text"],
-		contextWindow: 262144,
+		contextWindow: 256000,
 		maxTokens: 65536,
-		cost: { input: 0, output: 0, cacheRead: 0, cacheWrite: 0 },
+		cost: ZERO_COST,
 	},
 	{
-		id: "MiniMaxAI/MiniMax-M2.7",
-		name: "MiniMax M2.7 (Command Code)",
+		id: "moonshotai/Kimi-K2.5",
+		name: "Kimi K2.5 (Command Code)",
 		reasoning: true,
 		input: ["text"],
-		contextWindow: 200000,
+		contextWindow: 256000,
 		maxTokens: 65536,
-		cost: { input: 0, output: 0, cacheRead: 0, cacheWrite: 0 },
+		cost: ZERO_COST,
+	},
+	// Zhipu GLM
+	{
+		id: "zai-org/GLM-5.2",
+		name: "GLM 5.2 (Command Code)",
+		reasoning: true,
+		input: ["text"],
+		contextWindow: 1_000_000,
+		maxTokens: 131072,
+		cost: ZERO_COST,
 	},
 	{
 		id: "zai-org/GLM-5.1",
@@ -136,7 +154,129 @@ const MODELS: ModelDef[] = [
 		input: ["text"],
 		contextWindow: 200000,
 		maxTokens: 32768,
-		cost: { input: 0, output: 0, cacheRead: 0, cacheWrite: 0 },
+		cost: ZERO_COST,
+	},
+	{
+		id: "zai-org/GLM-5",
+		name: "GLM 5 (Command Code)",
+		reasoning: true,
+		input: ["text"],
+		contextWindow: 200000,
+		maxTokens: 32768,
+		cost: ZERO_COST,
+	},
+	// MiniMax
+	{
+		id: "MiniMaxAI/MiniMax-M3",
+		name: "MiniMax M3 (Command Code)",
+		reasoning: true,
+		input: ["text"],
+		contextWindow: 1_000_000,
+		maxTokens: 131072,
+		cost: ZERO_COST,
+	},
+	{
+		id: "MiniMaxAI/MiniMax-M2.7",
+		name: "MiniMax M2.7 (Command Code)",
+		reasoning: true,
+		input: ["text"],
+		contextWindow: 200000,
+		maxTokens: 65536,
+		cost: ZERO_COST,
+	},
+	{
+		id: "MiniMaxAI/MiniMax-M2.5",
+		name: "MiniMax M2.5 (Command Code)",
+		reasoning: true,
+		input: ["text"],
+		contextWindow: 200000,
+		maxTokens: 65536,
+		cost: ZERO_COST,
+	},
+	// Xiaomi MiMo
+	{
+		id: "xiaomi/mimo-v2.5-pro",
+		name: "MiMo V2.5 Pro (Command Code)",
+		reasoning: true,
+		input: ["text"],
+		contextWindow: 1_000_000,
+		maxTokens: 131072,
+		cost: ZERO_COST,
+	},
+	{
+		id: "xiaomi/mimo-v2.5",
+		name: "MiMo V2.5 (Command Code)",
+		reasoning: true,
+		input: ["text"],
+		contextWindow: 1_000_000,
+		maxTokens: 131072,
+		cost: ZERO_COST,
+	},
+	// Qwen
+	{
+		id: "Qwen/Qwen3.7-Max",
+		name: "Qwen 3.7 Max (Command Code)",
+		reasoning: true,
+		input: ["text"],
+		contextWindow: 1_000_000,
+		maxTokens: 131072,
+		cost: ZERO_COST,
+	},
+	{
+		id: "Qwen/Qwen3.7-Plus",
+		name: "Qwen 3.7 Plus (Command Code)",
+		reasoning: true,
+		input: ["text"],
+		contextWindow: 1_000_000,
+		maxTokens: 131072,
+		cost: ZERO_COST,
+	},
+	{
+		id: "Qwen/Qwen3.6-Max-Preview",
+		name: "Qwen 3.6 Max Preview (Command Code)",
+		reasoning: true,
+		input: ["text"],
+		contextWindow: 200000,
+		maxTokens: 32768,
+		cost: ZERO_COST,
+	},
+	{
+		id: "Qwen/Qwen3.6-Plus",
+		name: "Qwen 3.6 Plus (Command Code)",
+		reasoning: true,
+		input: ["text"],
+		contextWindow: 200000,
+		maxTokens: 32768,
+		cost: ZERO_COST,
+	},
+	// StepFun
+	{
+		id: "stepfun/Step-3.7-Flash",
+		name: "Step 3.7 Flash (Command Code)",
+		reasoning: true,
+		input: ["text"],
+		contextWindow: 256000,
+		maxTokens: 65536,
+		cost: ZERO_COST,
+	},
+	{
+		id: "stepfun/Step-3.5-Flash",
+		name: "Step 3.5 Flash (Command Code)",
+		reasoning: true,
+		input: ["text"],
+		contextWindow: 1_000_000,
+		maxTokens: 131072,
+		cost: ZERO_COST,
+	},
+	// NVIDIA
+	{
+		id: "nvidia/nemotron-3-ultra-550b-a55b",
+		name: "Nemotron 3 Ultra (Command Code)",
+		reasoning: true,
+		input: ["text"],
+		contextWindow: 1_000_000,
+		maxTokens: 131072,
+		cost: ZERO_COST,
 	},
 ];
 
@@ -374,8 +514,9 @@ function streamCommandCode(
 				headers: {
 					Authorization: `Bearer ${apiKey}`,
 					"Content-Type": "application/json",
+					Accept: "application/x-ndjson",
 					"x-cli-environment": "production",
-					"x-command-code-version": "0.28.1",
+					"x-command-code-version": COMMAND_CODE_VERSION,
 					"x-session-id": options?.sessionId ?? crypto.randomUUID(),
 				},
 				body: JSON.stringify(body),
@@ -567,9 +708,14 @@ function streamCommandCode(
 							calculateCost(model, output.usage);
 						}
 						const reason = gatewayEvent.finishReason ?? gatewayEvent.rawFinishReason;
+						const sawToolCall = output.content.some((b) => b.type === "toolCall");
 						if (reason === "length") output.stopReason = "length";
 						else if (reason === "tool-calls" || reason === "tool_calls" || reason === "tool_use")
 							output.stopReason = "toolUse";
+						// Some OSS models report finishReason "stop" even when they emitted
+						// tool calls; pi must still route those as tool use (mirrors the
+						// cliproxy commandcode translator).
+						else if (sawToolCall) output.stopReason = "toolUse";
 						else output.stopReason = "stop";
 						break;
 					}

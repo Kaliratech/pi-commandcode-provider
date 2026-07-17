@@ -44,6 +44,8 @@ Content-Type: application/json
 x-cli-environment: production
 x-command-code-version: 0.52.1
 x-session-id: <uuid>
+# Optional when CMD_ZDR=1:
+x-cmd-zdr: 1
 ```
 
 Body:

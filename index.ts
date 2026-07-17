@@ -556,6 +556,7 @@ function streamCommandCode(
 					"x-cli-environment": "production",
 					"x-command-code-version": COMMAND_CODE_VERSION,
 					"x-session-id": options?.sessionId ?? crypto.randomUUID(),
+					...(process.env.CMD_ZDR === "1" ? { "x-cmd-zdr": "1" } : {}),
 				},
 				body: JSON.stringify(body),
 				signal: options?.signal,

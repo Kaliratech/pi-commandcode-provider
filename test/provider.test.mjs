@@ -93,3 +93,28 @@ test("tool-call accepts the current args fallback", async (t) => {
 	assert.deepEqual(toolEnd?.toolCall?.arguments, { location: "Paris" });
 	assert.equal(events.at(-1)?.message?.usage?.output, 3);
 });
+
+test("CMD_ZDR enables the strict zero-retention header", async (t) => {
+	const previous = process.env.CMD_ZDR;
+	process.env.CMD_ZDR = "1";
+	t.after(() => {
+		if (previous === undefined) delete process.env.CMD_ZDR;
+		else process.env.CMD_ZDR = previous;
+	});
+
+	let zdrHeader;
+	t.mock.method(globalThis, "fetch", async (_input, init) => {
+		zdrHeader = init.headers["x-cmd-zdr"];
+		return new Response('{"type":"finish","finishReason":"stop","totalUsage":{"totalTokens":0}}\n', {
+			status: 200,
+			headers: { "content-type": "application/x-ndjson" },
+		});
+	});
+
+	const events = [];
+	const stream = provider.streamSimple(model, { systemPrompt: "", messages: [], tools: [] }, { apiKey: "user_test" });
+	for await (const event of stream) events.push(event);
+
+	assert.equal(zdrHeader, "1");
+	assert.equal(events.at(-1)?.type, "done");
+});

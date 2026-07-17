@@ -25,6 +25,10 @@ curl -sS https://api.commandcode.ai/alpha/whoami \
   -H "Authorization: Bearer $COMMANDCODE_API_KEY"
 ```
 
+Optional: set `CMD_ZDR=1` to send Command Code's strict zero-data-retention
+header. Models without a ZDR-capable upstream will fail with `422` instead of
+falling back.
+
 ## Install
 
 ```bash

@@ -1,7 +1,8 @@
 # `/alpha/generate` wire protocol
 
 Command Code does not publish an API reference for this endpoint. Everything
-here was reverse-engineered from the `command-code` npm CLI (v0.28.1) and
+here was reverse-engineered from the `command-code` npm CLI (currently verified
+against v0.52.1) and
 confirmed against the live gateway. Treat it as a snapshot that can drift —
 when it breaks, re-derive from the current CLI bundle (`$(npm root -g)/command-code/dist/index.mjs`).
 
@@ -41,7 +42,7 @@ POST /alpha/generate
 Authorization: Bearer user_xxxxxxxx…
 Content-Type: application/json
 x-cli-environment: production
-x-command-code-version: 0.28.1
+x-command-code-version: 0.52.1
 x-session-id: <uuid>
 ```
 
@@ -194,7 +195,7 @@ Event sequence for a typical tool-using turn:
 | `tool-input-end`    | `id`                                       | `toolcall_end`     |
 | `tool-call`         | `toolCallId`, `toolName`, `input` (full)   | `toolcall_end` (fallback) |
 | `finish-step`       | `finishReason`, `usage`, `providerMetadata`| `done`             |
-| `finish`            | (alias of finish-step in some flows)       | `done`             |
+| `finish`            | `finishReason`, `totalUsage` in current flows | finalizes `done` |
 | `error`             | `error` or `message`                       | `error`            |
 
 **Gotcha:** the per-delta tool events use field **`id`**, but the final
@@ -203,6 +204,8 @@ redundant `tool-call` event uses **`toolCallId`**. If you key everything off
 `id ?? toolCallId` and dedupes so a doubled end event can't fire twice.
 
 `finishReason` observed values: `"stop"`, `"length"`, `"tool-calls"`.
+Current streams commonly contain both `finish-step` and `finish`; consumers
+must emit one terminal result and reject EOF if neither event arrives.
 
 ### Usage shape (in `finish-step`)
 

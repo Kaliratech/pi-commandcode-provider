@@ -49,11 +49,11 @@ const ENDPOINT = "/alpha/generate";
 // Mirrors the `x-command-code-version` the CLI sends (its package version).
 // Keep in step with the installed `command-code` package; stale values risk
 // being rejected or flagged by the gateway.
-const COMMAND_CODE_VERSION = "0.39.1";
+const COMMAND_CODE_VERSION = "0.52.1";
 
 // ---- Models -------------------------------------------------------------
 // IDs are the gateway's canonical ids from GET /provider/v1/models
-// (readable with a user_... key as of CLI 0.39.x).
+// (readable with a user_... key as of CLI 0.52.x).
 //
 // Only the open-weight / OSS roster is exposed here. Command Code also serves
 // proprietary frontier models (claude-*, gpt-*, google/gemini-*) through the
@@ -102,10 +102,19 @@ const MODELS: ModelDef[] = [
 	},
 	// Moonshot Kimi
 	{
+		id: "moonshotai/Kimi-K3",
+		name: "Kimi K3 (Command Code)",
+		reasoning: true,
+		input: ["text", "image"],
+		contextWindow: 1_000_000,
+		maxTokens: 65_536,
+		cost: ZERO_COST,
+	},
+	{
 		id: "moonshotai/Kimi-K2.7-Code",
 		name: "Kimi K2.7 Code (Command Code)",
 		reasoning: true,
-		input: ["text"],
+		input: ["text", "image"],
 		contextWindow: 256000,
 		maxTokens: 65536,
 		cost: ZERO_COST,
@@ -114,7 +123,7 @@ const MODELS: ModelDef[] = [
 		id: "moonshotai/Kimi-K2.7-Code-Highspeed",
 		name: "Kimi K2.7 Code HighSpeed (Command Code)",
 		reasoning: true,
-		input: ["text"],
+		input: ["text", "image"],
 		contextWindow: 262000,
 		maxTokens: 65536,
 		cost: ZERO_COST,
@@ -122,8 +131,8 @@ const MODELS: ModelDef[] = [
 	{
 		id: "moonshotai/Kimi-K2.6",
 		name: "Kimi K2.6 (Command Code)",
-		reasoning: true,
-		input: ["text"],
+		reasoning: false,
+		input: ["text", "image"],
 		contextWindow: 256000,
 		maxTokens: 65536,
 		cost: ZERO_COST,
@@ -131,8 +140,8 @@ const MODELS: ModelDef[] = [
 	{
 		id: "moonshotai/Kimi-K2.5",
 		name: "Kimi K2.5 (Command Code)",
-		reasoning: true,
-		input: ["text"],
+		reasoning: false,
+		input: ["text", "image"],
 		contextWindow: 256000,
 		maxTokens: 65536,
 		cost: ZERO_COST,
@@ -145,6 +154,15 @@ const MODELS: ModelDef[] = [
 		input: ["text"],
 		contextWindow: 1_000_000,
 		maxTokens: 131072,
+		cost: ZERO_COST,
+	},
+	{
+		id: "zai-org/GLM-5.2-Fast",
+		name: "GLM 5.2 Fast (Command Code)",
+		reasoning: false,
+		input: ["text"],
+		contextWindow: 1_000_000,
+		maxTokens: 65_536,
 		cost: ZERO_COST,
 	},
 	{
@@ -170,7 +188,7 @@ const MODELS: ModelDef[] = [
 		id: "MiniMaxAI/MiniMax-M3",
 		name: "MiniMax M3 (Command Code)",
 		reasoning: true,
-		input: ["text"],
+		input: ["text", "image"],
 		contextWindow: 1_000_000,
 		maxTokens: 131072,
 		cost: ZERO_COST,
@@ -226,7 +244,7 @@ const MODELS: ModelDef[] = [
 		id: "Qwen/Qwen3.7-Plus",
 		name: "Qwen 3.7 Plus (Command Code)",
 		reasoning: true,
-		input: ["text"],
+		input: ["text", "image"],
 		contextWindow: 1_000_000,
 		maxTokens: 131072,
 		cost: ZERO_COST,
@@ -254,7 +272,7 @@ const MODELS: ModelDef[] = [
 		id: "stepfun/Step-3.7-Flash",
 		name: "Step 3.7 Flash (Command Code)",
 		reasoning: true,
-		input: ["text"],
+		input: ["text", "image"],
 		contextWindow: 256000,
 		maxTokens: 65536,
 		cost: ZERO_COST,
@@ -268,6 +286,16 @@ const MODELS: ModelDef[] = [
 		maxTokens: 131072,
 		cost: ZERO_COST,
 	},
+	// Tencent
+	{
+		id: "tencent/Hy3",
+		name: "Tencent Hy3 (Command Code)",
+		reasoning: true,
+		input: ["text"],
+		contextWindow: 262_144,
+		maxTokens: 65_536,
+		cost: ZERO_COST,
+	},
 	// NVIDIA
 	{
 		id: "nvidia/nemotron-3-ultra-550b-a55b",
@@ -276,6 +304,16 @@ const MODELS: ModelDef[] = [
 		input: ["text"],
 		contextWindow: 1_000_000,
 		maxTokens: 131072,
+		cost: ZERO_COST,
+	},
+	// Thinking Machines
+	{
+		id: "thinkingmachines/inkling",
+		name: "Inkling (Command Code)",
+		reasoning: true,
+		input: ["text", "image"],
+		contextWindow: 256_000,
+		maxTokens: 65_536,
 		cost: ZERO_COST,
 	},
 ];
@@ -535,6 +573,7 @@ function streamCommandCode(
 			const idToIndex = new Map<string, number>();
 			const toolJsonByIndex = new Map<number, string>();
 			const endedToolCalls = new Set<number>();
+			let sawTerminalEvent = false;
 
 			for await (const event of ndjsonLines(response.body)) {
 				if (!event || typeof event !== "object") continue;
@@ -655,8 +694,9 @@ function streamCommandCode(
 						const block = output.content[idx];
 						if (block.type !== "toolCall") break;
 						// Some streams send full input on "tool-call"; prefer that if present
-						if (gatewayEvent.input && typeof gatewayEvent.input === "object") {
-							block.arguments = gatewayEvent.input;
+						const completeInput = gatewayEvent.input ?? gatewayEvent.args;
+						if (completeInput && typeof completeInput === "object") {
+							block.arguments = completeInput;
 						} else {
 							const acc = toolJsonByIndex.get(idx) ?? "";
 							if (acc) {
@@ -682,7 +722,8 @@ function streamCommandCode(
 					}
 					case "finish-step":
 					case "finish": {
-						const usage = gatewayEvent.usage;
+						sawTerminalEvent = true;
+						const usage = gatewayEvent.usage ?? gatewayEvent.totalUsage;
 						if (usage) {
 							// The gateway reports inputTokens as the TOTAL input (cached + uncached),
 							// matching the Vercel AI SDK convention. Pi's Usage shape expects
@@ -728,6 +769,9 @@ function streamCommandCode(
 						);
 					}
 				}
+			}
+			if (!sawTerminalEvent) {
+				throw new Error("Command Code stream ended before a terminal event");
 			}
 
 			stream.push({

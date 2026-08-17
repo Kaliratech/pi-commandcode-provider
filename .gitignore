@@ -1,0 +1,10 @@
+node_modules/
+dist/
+.DS_Store
+*.log
+
+# Local key dumps.
+.commandcode-api-key
+commandcode-api-key.txt
+.env
+.env.local

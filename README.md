@@ -43,7 +43,7 @@ pi -e git:github.com/safzanpirani/pi-commandcode-provider
 
 ## Use
 
-The provider id is `commandcode-alpha`, not `commandcode`. omp 18.2.5 and later ship a builtin
+The provider id is `commandcode-alpha`, not `commandcode`. omp 18.2.5 ships a builtin (measured 2026-09-19; re-check on newer builds)
 `commandcode` provider aimed at the Pro-gated `https://api.commandcode.ai/provider/v1`, and that
 builtin wins the id against a linked or installed extension: every call returns
 `403 upgrade_required` on a Go plan and silently falls back to another model. Registering a

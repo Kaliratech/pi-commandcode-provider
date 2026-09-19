@@ -809,8 +809,15 @@ function streamCommandCode(
 // ---- Extension entry point ----------------------------------------------
 
 export default function (pi: ExtensionAPI) {
-	pi.registerProvider("commandcode", {
-		name: "Command Code",
+	// Registered as `commandcode-alpha`, NOT `commandcode`: omp 18.2.5 ships a builtin
+	// provider on that id (providers/commandcode.kdl) pointing at the Pro-gated
+	// https://api.commandcode.ai/provider/v1. The builtin wins the id, so registering
+	// `commandcode` here is silently dead: verified 2026-09-19, a linked build on the old
+	// id still produced `403 upgrade_required` from /provider/v1 and fell back to
+	// anthropic/claude-fable-5-1. Reference models as
+	// `commandcode-alpha/<model>` in config.yml and on the command line.
+	pi.registerProvider("commandcode-alpha", {
+		name: "Command Code (alpha/generate)",
 		baseUrl: BASE_URL,
 		apiKey: "COMMANDCODE_API_KEY",
 		authHeader: true,

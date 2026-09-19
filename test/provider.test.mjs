@@ -6,7 +6,7 @@ import registerCommandCode from "../index.ts";
 let provider;
 registerCommandCode({
 	registerProvider(name, config) {
-		assert.equal(name, "commandcode");
+		assert.equal(name, "commandcode-alpha");
 		provider = config;
 	},
 });
@@ -15,7 +15,7 @@ const model = {
 	id: "deepseek/deepseek-v4-flash",
 	name: "DeepSeek V4 Flash",
 	api: "commandcode-generate",
-	provider: "commandcode",
+	provider: "commandcode-alpha",
 	reasoning: true,
 	input: ["text"],
 	contextWindow: 1_000_000,

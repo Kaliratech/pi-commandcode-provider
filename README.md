@@ -43,12 +43,18 @@ pi -e git:github.com/safzanpirani/pi-commandcode-provider
 
 ## Use
 
+The provider id is `commandcode-alpha`, not `commandcode`. omp 18.2.5 and later ship a builtin
+`commandcode` provider aimed at the Pro-gated `https://api.commandcode.ai/provider/v1`, and that
+builtin wins the id against a linked or installed extension: every call returns
+`403 upgrade_required` on a Go plan and silently falls back to another model. Registering a
+distinct id keeps this extension's `/alpha/generate` path reachable.
+
 ```bash
-pi --model "commandcode/deepseek/deepseek-v4-pro" -p "what is 17 * 23?"
-pi --model "commandcode/moonshotai/Kimi-K2.6" -p "draft a haiku about caching"
+pi --model "commandcode-alpha/deepseek/deepseek-v4-pro" -p "what is 17 * 23?"
+pi --model "commandcode-alpha/moonshotai/Kimi-K2.6" -p "draft a haiku about caching"
 ```
 
-`pi --list-models | grep commandcode` shows everything registered.
+`pi --list-models | grep commandcode-alpha` shows everything registered.
 
 ## Models
 

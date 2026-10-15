@@ -42,7 +42,7 @@
     "test": "node --experimental-strip-types --test test/*.test.mjs"
   },
   "devDependencies": {
-    "@types/node": "^22.15.29",
-    "typescript": "^5.9.2"
+    "@types/node": "^22.20.5",
+    "typescript": "^5.9.3"
   }
 }

@@ -15,7 +15,7 @@ concurrency:
 
 jobs:
   validate:
-    runs-on: ubuntu-latest
+    runs-on: [kiranova-build]
     timeout-minutes: 15
     steps:
       - uses: actions/checkout@v4

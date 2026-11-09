@@ -43,6 +43,8 @@ import {
 	createAssistantMessageEventStream,
 } from "@earendil-works/pi-ai";
 import type { ExtensionAPI } from "@earendil-works/pi-coding-agent";
+import { appendFileSync, mkdirSync } from "node:fs";
+import { createHash } from "node:crypto";
 
 const BASE_URL = "https://api.commandcode.ai";
 const ENDPOINT = "/alpha/generate";
@@ -79,6 +81,30 @@ type ModelDef = {
 };
 
 const ZERO_COST = { input: 0, output: 0, cacheRead: 0, cacheWrite: 0 };
+
+// DSH-style cache visibility: pi-ai receives the gateway's usage, but omp's
+// session log drops it, so the per-turn cache-hit rate is otherwise unmeasurable.
+// One JSONL line per completion, appended next to omp's own state.
+function sysDigest(text: string): { sysLen: number; sysHash: string } {
+	return { sysLen: text.length, sysHash: createHash("sha256").update(text).digest("hex").slice(0, 16) };
+}
+
+function logUsage(
+	modelId: string,
+	usage: { input: number; output: number; cacheRead: number },
+	digest: { sysLen: number; sysHash: string },
+): void {
+	try {
+		const dir = `${process.env.HOME ?? "."}/.omp/state`;
+		mkdirSync(dir, { recursive: true });
+		appendFileSync(
+			`${dir}/commandcode-usage.jsonl`,
+			JSON.stringify({ ts: Date.now(), model: modelId, ...digest, ...usage }) + "\n",
+		);
+	} catch {
+		// telemetry must never break a turn
+	}
+}
 
 const MODELS: ModelDef[] = [
 	// DeepSeek
@@ -168,6 +194,24 @@ const MODELS: ModelDef[] = [
 	{
 		id: "zai-org/GLM-5.2-Fast",
 		name: "GLM 5.2 Fast (Command Code)",
+		reasoning: false,
+		input: ["text"],
+		contextWindow: 1_000_000,
+		maxTokens: 65_536,
+		cost: ZERO_COST,
+	},
+	{
+		id: "zai-org/glm-5.3",
+		name: "GLM 5.3 (Command Code)",
+		reasoning: true,
+		input: ["text"],
+		contextWindow: 1_000_000,
+		maxTokens: 131072,
+		cost: ZERO_COST,
+	},
+	{
+		id: "z-ai/glm-5.3-flash",
+		name: "GLM 5.3 Flash (Command Code)",
 		reasoning: false,
 		input: ["text"],
 		contextWindow: 1_000_000,
@@ -539,6 +583,9 @@ function streamCommandCode(
 				input_schema: t.parameters,
 			}));
 
+			const systemText = Array.isArray(context.systemPrompt)
+				? context.systemPrompt.join("\n\n")
+				: (context.systemPrompt ?? "");
 			const body = {
 				config: staticConfig(),
 				memory: "",
@@ -547,9 +594,7 @@ function streamCommandCode(
 				permissionMode: "standard",
 				params: {
 					model: model.id,
-					system: Array.isArray(context.systemPrompt)
-						? context.systemPrompt.join("\n\n")
-						: (context.systemPrompt ?? ""),
+					system: systemText,
 					messages: convertMessages(context.messages),
 					tools,
 					max_tokens: options?.maxTokens ?? model.maxTokens ?? 8192,
@@ -573,6 +618,11 @@ function streamCommandCode(
 				signal: options?.signal,
 			});
 
+			if (response.status === 401) {
+				throw new Error(
+					"Command Code rejected the token (401). The key rotated: re-source the KIRANOVA env file or restart this session so COMMANDCODE_API_KEY picks up the Keychain value (service kiranova-omp-commandcode).",
+				);
+			}
 			if (!response.ok || !response.body) {
 				let detail = "";
 				try {
@@ -759,6 +809,8 @@ function streamCommandCode(
 								output.usage.cacheRead +
 								output.usage.cacheWrite;
 							calculateCost(model, output.usage);
+							// finish-step and finish both fire; log once, on the terminal event.
+							if (type === "finish") logUsage(model.id, output.usage, sysDigest(systemText));
 						}
 						const reason = gatewayEvent.finishReason ?? gatewayEvent.rawFinishReason;
 						const sawToolCall = output.content.some((b) => b.type === "toolCall");

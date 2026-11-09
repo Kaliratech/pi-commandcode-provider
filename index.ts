@@ -89,6 +89,7 @@ const ZERO_COST = { input: 0, output: 0, cacheRead: 0, cacheWrite: 0 };
 // `security` is absent on Linux fleet nodes, where this throws and the env value
 // is used instead.
 let cachedApiKey: string | undefined;
+let keychainWarned = false;
 
 // `security` is a subprocess, so the result is cached for the process and only
 // re-read when the gateway rejects it. Calling it per stream event would block
@@ -106,7 +107,15 @@ function resolveApiKey(envKey: string | undefined, force = false): string | unde
 			return out;
 		}
 	} catch {
-		// not macOS, no Keychain, or the item is locked
+		// not macOS, no Keychain, or the item is locked. Say so once: a silent
+		// fallback here is what makes a 401 look like a dead key rather than an
+		// unreadable Keychain, and the two need different fixes.
+		if (!keychainWarned) {
+			keychainWarned = true;
+			console.error(
+				"[commandcode] Keychain read failed; falling back to COMMANDCODE_API_KEY from the environment.",
+			);
+		}
 	}
 	if (envKey && envKey.startsWith("user_")) {
 		cachedApiKey = envKey;

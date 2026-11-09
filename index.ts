@@ -97,7 +97,7 @@ function resolveApiKey(envKey: string | undefined, force = false): string | unde
 	if (cachedApiKey && !force) return cachedApiKey;
 	try {
 		const out = execFileSync(
-			"security",
+			"/usr/bin/security",
 			["find-generic-password", "-s", "kiranova-omp-commandcode", "-a", "shade", "-w"],
 			{ encoding: "utf8", timeout: 5_000 },
 		).trim();

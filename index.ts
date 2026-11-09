@@ -45,6 +45,7 @@ import {
 import type { ExtensionAPI } from "@earendil-works/pi-coding-agent";
 import { appendFileSync, mkdirSync } from "node:fs";
 import { createHash } from "node:crypto";
+import { execFileSync } from "node:child_process";
 
 const BASE_URL = "https://api.commandcode.ai";
 const ENDPOINT = "/alpha/generate";
@@ -82,13 +83,33 @@ type ModelDef = {
 
 const ZERO_COST = { input: 0, output: 0, cacheRead: 0, cacheWrite: 0 };
 
-// DSH-style cache visibility: pi-ai receives the gateway's usage, but omp's
-// session log drops it, so the per-turn cache-hit rate is otherwise unmeasurable.
-// One JSONL line per completion, appended next to omp's own state.
+// The macOS Keychain holds the live key; the environment is a cache that can go
+// stale after a rotation (a dead `user_...` token still looks well-formed and the
+// gateway answers 401). Prefer the Keychain, fall back to whatever omp resolved.
+// `security` is absent on Linux fleet nodes, where this throws and the env value
+// is used instead.
+function resolveApiKey(envKey: string | undefined): string | undefined {
+	try {
+		const out = execFileSync(
+			"security",
+			["find-generic-password", "-s", "kiranova-omp-commandcode", "-a", "shade", "-w"],
+			{ encoding: "utf8", timeout: 5_000 },
+		).trim();
+		if (out.startsWith("user_")) return out;
+	} catch {
+		// not macOS, no Keychain, or the item is locked
+	}
+	if (envKey && envKey.startsWith("user_")) return envKey;
+	return undefined;
+}
+
 function sysDigest(text: string): { sysLen: number; sysHash: string } {
 	return { sysLen: text.length, sysHash: createHash("sha256").update(text).digest("hex").slice(0, 16) };
 }
 
+// DSH-style cache visibility: pi-ai receives the gateway's usage, but omp's
+// session log drops it, so the per-turn cache-hit rate is otherwise unmeasurable.
+// One JSONL line per completion, appended next to omp's own state.
 function logUsage(
 	modelId: string,
 	usage: { input: number; output: number; cacheRead: number },
@@ -572,7 +593,7 @@ function streamCommandCode(
 		};
 
 		try {
-			const apiKey = options?.apiKey;
+			const apiKey = resolveApiKey(options?.apiKey);
 			if (!apiKey) throw new Error("No Command Code API key. Set COMMANDCODE_API_KEY=user_...");
 
 			stream.push({ type: "start", partial: output });

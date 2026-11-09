@@ -88,18 +88,30 @@ const ZERO_COST = { input: 0, output: 0, cacheRead: 0, cacheWrite: 0 };
 // gateway answers 401). Prefer the Keychain, fall back to whatever omp resolved.
 // `security` is absent on Linux fleet nodes, where this throws and the env value
 // is used instead.
-function resolveApiKey(envKey: string | undefined): string | undefined {
+let cachedApiKey: string | undefined;
+
+// `security` is a subprocess, so the result is cached for the process and only
+// re-read when the gateway rejects it. Calling it per stream event would block
+// the event loop, and a locked Keychain would stall every turn for the timeout.
+function resolveApiKey(envKey: string | undefined, force = false): string | undefined {
+	if (cachedApiKey && !force) return cachedApiKey;
 	try {
 		const out = execFileSync(
 			"security",
 			["find-generic-password", "-s", "kiranova-omp-commandcode", "-a", "shade", "-w"],
 			{ encoding: "utf8", timeout: 5_000 },
 		).trim();
-		if (out.startsWith("user_")) return out;
+		if (out.startsWith("user_")) {
+			cachedApiKey = out;
+			return out;
+		}
 	} catch {
 		// not macOS, no Keychain, or the item is locked
 	}
-	if (envKey && envKey.startsWith("user_")) return envKey;
+	if (envKey && envKey.startsWith("user_")) {
+		cachedApiKey = envKey;
+		return envKey;
+	}
 	return undefined;
 }
 
@@ -624,20 +636,28 @@ function streamCommandCode(
 				},
 			};
 
-			const response = await fetch(`${BASE_URL}${ENDPOINT}`, {
-				method: "POST",
-				headers: {
-					Authorization: `Bearer ${apiKey}`,
-					"Content-Type": "application/json",
-					Accept: "application/x-ndjson",
-					"x-cli-environment": "production",
-					"x-command-code-version": COMMAND_CODE_VERSION,
-					"x-session-id": options?.sessionId ?? crypto.randomUUID(),
-					...(process.env.CMD_ZDR === "1" ? { "x-cmd-zdr": "1" } : {}),
-				},
-				body: JSON.stringify(body),
-				signal: options?.signal,
-			});
+			const send = (key: string) =>
+				fetch(`${BASE_URL}${ENDPOINT}`, {
+					method: "POST",
+					headers: {
+						Authorization: `Bearer ${key}`,
+						"Content-Type": "application/json",
+						Accept: "application/x-ndjson",
+						"x-cli-environment": "production",
+						"x-command-code-version": COMMAND_CODE_VERSION,
+						"x-session-id": options?.sessionId ?? crypto.randomUUID(),
+						...(process.env.CMD_ZDR === "1" ? { "x-cmd-zdr": "1" } : {}),
+					},
+					body: JSON.stringify(body),
+					signal: options?.signal,
+				});
+
+			let response = await send(apiKey);
+			if (response.status === 401) {
+				// A rotation can land mid-process: re-read the Keychain once.
+				const fresh = resolveApiKey(options?.apiKey, true);
+				if (fresh && fresh !== apiKey) response = await send(fresh);
+			}
 
 			if (response.status === 401) {
 				throw new Error(
